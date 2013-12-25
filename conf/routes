@@ -1,0 +1,6 @@
+# Routes
+# This file defines all application routes (Higher priority routes first)
+# ~~~~
+
+POST    /:topic/:key          controllers.Application.send(topic: String, key: String)
+GET     /:topic/:key          controllers.Application.get(topic: String, key: String, groupId: String)
