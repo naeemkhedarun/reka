@@ -6,24 +6,34 @@ import kafka.common.ErrorMapping
 import kafka.common.TopicAndPartition
 import kafka.javaapi._
 import kafka.javaapi.consumer.SimpleConsumer
-import java.util.{Properties, List}
+import java.util.Properties
 import scala.collection.JavaConversions._
 import java.util
 import kafka.javaapi
 import play.api.Play
 import kafka.producer.{KeyedMessage, ProducerConfig, Producer}
 import play.api.Play.current
-
-trait MessageConsumer {
-  def get(topic: String, key: String, groupId: String)
-  def send(topic: String, key: String, message: String)
-}
+import kafka.utils.{ZkUtils, ZKStringSerializer}
+import org.I0Itec.zkclient.ZkClient
 
 trait MessageConsumerComponent {
 
-  val messageConsumer: MessageConsumer
+  val messageConsumer: KafkaMessageConsumer
 
-  class KafkaMessageConsumer extends MessageConsumer  {
+  class KafkaMessageConsumer {
+
+    def listTopics() : Seq[String] = {
+      val setting: Option[String] = Play.configuration.getString("zookeeper.connect")
+      val zkClient = new ZkClient(setting.get, 30000, 30000, ZKStringSerializer)
+      ZkUtils.getAllTopics(zkClient)
+    }
+
+    def listPartitions(topic: String) = {
+      val setting: Option[String] = Play.configuration.getString("zookeeper.connect")
+      val zkClient = new ZkClient(setting.get, 30000, 30000, ZKStringSerializer)
+      ZkUtils.getPartitionsForTopics(zkClient, Seq(topic)).flatMap(f => f._2)
+    }
+
     private val m_replicaBrokers: util.List[String] = new util.ArrayList[String]()
 
     def getLastOffset(consumer: SimpleConsumer, topic: String, partition: Int, whichTime: Long, clientName: String): Long = {
@@ -44,12 +54,11 @@ trait MessageConsumerComponent {
 
 
     private def findNewLeader(a_oldLeader: String,
-                              a_topic: String,
-                              a_partition: Int,
-                              a_port: Int): String = {
+                              topic: String,
+                              partition: Int): String = {
       for (i <- 0 until 3) {
         var goToSleep = false
-        val metadata = findLeader(m_replicaBrokers, a_port, a_topic, a_partition)
+        val metadata = findLeader(m_replicaBrokers, topic, partition)
         if (metadata == null) {
           goToSleep = true
         } else if (metadata.leader == null) {
@@ -72,29 +81,31 @@ trait MessageConsumerComponent {
       throw new Exception("Unable to find new leader after Broker failure. Exiting")
     }
 
-    private def findLeader(a_seedBrokers: List[String],
-                           a_port: Int,
-                           a_topic: String,
-                           a_partition: Int): javaapi.PartitionMetadata = {
+    private def findLeader(brokers: util.List[String],
+                           topic: String,
+                           partition: Int): javaapi.PartitionMetadata = {
       var returnMetaData: javaapi.PartitionMetadata = null
-      for (seed <- a_seedBrokers) {
+      for (seed <- brokers) {
         var consumer: SimpleConsumer = null
         try {
-          consumer = new SimpleConsumer(seed, a_port, 100000, 64 * 1024, "leaderLookup")
+          val host = seed.split(":")(0)
+          val port = seed.split(":")(1).toInt
+
+          consumer = new SimpleConsumer(host, port, 100000, 64 * 1024, "leaderLookup")
           val topics = new util.ArrayList[String]()
-          topics.add(a_topic)
+          topics.add(topic)
           val req = new TopicMetadataRequest(topics)
           val resp = consumer.send(req)
           val metaData = resp.topicsMetadata
-          for (item <- metaData; part <- item.partitionsMetadata if part.partitionId == a_partition) {
+          for (item <- metaData; part <- item.partitionsMetadata if part.partitionId == partition) {
             returnMetaData = part
             //break
           }
         } catch {
           case e: Exception => println("Error communicating with Broker [" + seed + "] to find Leader for [" +
-            a_topic +
+            topic +
             ", " +
-            a_partition +
+            partition +
             "] Reason: " +
             e)
         } finally {
@@ -107,94 +118,99 @@ trait MessageConsumerComponent {
           m_replicaBrokers.add(replica.host)
         }
       }
-      return returnMetaData
+      returnMetaData
     }
 
-    def get(topic: String, key: String, groupId: String) {
+    class TopicMessages {
+      val messages: Seq[String] = Seq()
+      val errors: Seq[String] = Seq()
+    }
 
-      val a_seedBrokers = Seq("ubuntu")
-      val a_port = 9092
-      val a_topic = topic
-      val a_partition = 1
-      var a_maxReads = 100
+    def get(topic: String, partition: Int) : TopicMessages = {
+      val result = new TopicMessages
 
-      val metadata = findLeader(a_seedBrokers, a_port, a_topic, a_partition)
+      val brokers: util.List[String] = Play.configuration.getStringList("metadata.broker.list").get
+      var maxReads = 100
+
+      val metadata = findLeader(brokers, topic, partition)
       if (metadata == null) {
-        throw new Exception("Can't find metadata for Topic and Partition. Exiting")
+        result.errors :+ "Can't find metadata for Topic and Partition. Exiting"
+        return result
       }
       if (metadata.leader == null) {
-        throw new Exception("Can't find Leader for Topic and Partition. Exiting")
+        result.errors :+ "Can't find Leader for Topic and Partition. Exiting"
+        return result
       }
+
       var leadBroker = metadata.leader.host
-      val clientName = "Client_" + a_topic + "_" + a_partition
-      var consumer = new SimpleConsumer(leadBroker, a_port, 100000, 64 * 1024, clientName)
-      var readOffset = getLastOffset(consumer, a_topic, a_partition, kafka.api.OffsetRequest.EarliestTime,
+      val port = metadata.leader.port
+
+      val clientName = "Client_" + topic + "_" + partition
+      var consumer = new SimpleConsumer(leadBroker, port, 100000, 64 * 1024, clientName)
+      var readOffset = getLastOffset(consumer, topic, partition, kafka.api.OffsetRequest.EarliestTime,
         clientName)
       var numErrors = 0
-      while (a_maxReads > 0) {
+      while (maxReads > 0) {
         if (consumer == null) {
-          consumer = new SimpleConsumer(leadBroker, a_port, 100000, 64 * 1024, clientName)
+          consumer = new SimpleConsumer(leadBroker, port, 100000, 64 * 1024, clientName)
         }
-        val req = new FetchRequestBuilder().clientId(clientName).addFetch(a_topic, a_partition, readOffset,
+
+        val req = new FetchRequestBuilder().clientId(clientName).addFetch(topic, partition, readOffset,
           100000)
           .build()
         val fetchResponse = consumer.fetch(req)
         if (fetchResponse.hasError) {
           numErrors += 1
-          val code = fetchResponse.errorCode(a_topic, a_partition)
-          println("Error fetching data from the Broker:" + leadBroker +
-            " Reason: " +
-            code)
+          val code = fetchResponse.errorCode(topic, partition)
+//          result.errors :+ ("Error fetching data from the Broker:" + leadBroker + " Reason: " + code)
           if (numErrors > 5) //break
             if (code == ErrorMapping.OffsetOutOfRangeCode) {
-              readOffset = getLastOffset(consumer, a_topic, a_partition, kafka.api.OffsetRequest.LatestTime,
-                clientName)
+              readOffset = getLastOffset(consumer, topic, partition, kafka.api.OffsetRequest.LatestTime, clientName)
               //continue
             }
           consumer.close()
           consumer = null
-          leadBroker = findNewLeader(leadBroker, a_topic, a_partition, a_port)
+          leadBroker = findNewLeader(leadBroker, topic, partition)
+
           //continue
         }
         numErrors = 0
         var numRead = 0
-        for (messageAndOffset <- fetchResponse.messageSet(a_topic, a_partition)) {
+        for (messageAndOffset <- fetchResponse.messageSet(topic, partition)) {
           val currentOffset = messageAndOffset.offset
           if (currentOffset < readOffset) {
-            println("Found an old offset: " + currentOffset + " Expecting: " +
-              readOffset)
+//            println("Found an old offset: " + currentOffset + " Expecting: " + readOffset)
             //continue
           }
           readOffset = messageAndOffset.nextOffset
           val payload = messageAndOffset.message.payload
           val bytes = Array.ofDim[Byte](payload.limit())
           payload.get(bytes)
-          println(String.valueOf(messageAndOffset.offset) + ": " + new String(bytes, "UTF-8"))
+          result.messages :+ (String.valueOf(messageAndOffset.offset) + ": " + new String(bytes, "UTF-8"))
           numRead += 1
-          a_maxReads -= 1
+          maxReads -= 1
         }
         if (numRead == 0) {
           if (consumer != null) consumer.close()
-          a_maxReads = 0
-          return "done"
+          maxReads = 0
         }
       }
       if (consumer != null) consumer.close()
 
-      return "passed"
+      result
     }
 
-    def send(topic: String, key: String, message: String) {
+    def send(topic: String, partition: Int, message: String) {
 
       val props: Properties = new Properties()
 
-      val setting: Option[String] = Play.configuration.getString("metadata.broker.list")
-      props.put("metadata.broker.list", setting.get)
+      val setting: Option[util.List[String]] = Play.configuration.getStringList("metadata.broker.list")
+      props.put("metadata.broker.list", setting.get(0))
       props.put("serializer.class", "kafka.serializer.StringEncoder")
       props.put("request.required.acks", "1")
 
       val producer: Producer[String,String] = new Producer[String, String](new ProducerConfig(props))
-      val data: KeyedMessage[String, String] = new KeyedMessage[String, String](topic, key, message)
+      val data: KeyedMessage[String, String] = new KeyedMessage[String, String](topic, partition.toString, message)
 
       producer.send(data)
       producer.close()

@@ -2,5 +2,8 @@
 # This file defines all application routes (Higher priority routes first)
 # ~~~~
 
-POST    /:topic/:key          controllers.Application.send(topic: String, key: String)
-GET     /:topic/:key          controllers.Application.get(topic: String, key: String, groupId: String)
+GET     /                     controllers.Application.index()
+GET     /:topic               controllers.Application.getPartitions(topic:String)
+GET     /:topic/:partition    controllers.Application.get(topic: String, partition: Int)
+
+POST    /:topic/:partition          controllers.Application.send(topic: String, partition: Int)
