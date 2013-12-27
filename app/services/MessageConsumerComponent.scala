@@ -16,6 +16,11 @@ import play.api.Play.current
 import kafka.utils.{ZkUtils, ZKStringSerializer}
 import org.I0Itec.zkclient.ZkClient
 
+class TopicMessages {
+  var messages: Seq[String] = Seq()
+  val errors: Seq[String] = Seq()
+}
+
 trait MessageConsumerComponent {
 
   val messageConsumer: KafkaMessageConsumer
@@ -119,11 +124,6 @@ trait MessageConsumerComponent {
         }
       }
       returnMetaData
-    }
-
-    class TopicMessages {
-      var messages: Seq[String] = Seq()
-      val errors: Seq[String] = Seq()
     }
 
     def get(topic: String, partition: Int): TopicMessages = {

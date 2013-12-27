@@ -6,7 +6,7 @@ import org.specs2.mock._
 
 import play.api.test._
 import play.api.test.Helpers._
-import services.MessageConsumerComponent
+import services.{TopicMessages, MessageConsumerComponent}
 
 trait TestEnvironment extends MessageConsumerComponent with ApplicationController with Mockito
 {
@@ -18,9 +18,11 @@ class ApplicationSpec extends Specification with TestEnvironment {
 
   "getting by topic" should {
 
+    messageConsumer.get("topic", 0) returns new TopicMessages
+
     "return list of messages" in {
-      val result = this.get("topic","key","group")(FakeRequest())
-      there was one(messageConsumer).get("topic", "key", "group")
+      val result = this.get("topic",0)(FakeRequest())
+      there was one(messageConsumer).get("topic", 0)
       status(result) must beEqualTo(OK)
     }
   }
