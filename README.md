@@ -4,9 +4,13 @@ ReKa
 A Restful interface to Apache Kafka
 ----------------------------------------------
 
-This is a work in progress RESTful interface to push messages to [Apache Kafka](https://kafka.apache.org/) and retrieve information and messages from it. It is built on the [Play!](http://www.playframework.com/) framework using Scala.
+This is a work in progress RESTful interface to push messages to [Apache Kafka](https://kafka.apache.org/) and retrieve
+information and messages from it. It is built on the [Play!](http://www.playframework.com/) framework using Scala.
 
 Please note this has been developed against a single kafka instance and may not work correctly with a cluster.
+
+Work has been inspired by the [restful api proposal](https://cwiki.apache.org/confluence/display/KAFKA/Restful+API+Proposal)
+and [mumrahs gist](https://gist.github.com/mumrah/3248179).
 
 Contribute
 ----------
