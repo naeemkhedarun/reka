@@ -92,7 +92,7 @@ Supported Operations
         ...
     ]
     
-###Put a message into a partitioned topic###
+###Push a message into a partitioned topic###
 
 ####Request####
     
