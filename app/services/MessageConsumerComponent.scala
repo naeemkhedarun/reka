@@ -22,7 +22,7 @@ trait MessageConsumerComponent {
 
   class KafkaMessageConsumer {
 
-    def listTopics() : Seq[String] = {
+    def listTopics(): Seq[String] = {
       val setting: Option[String] = Play.configuration.getString("zookeeper.connect")
       val zkClient = new ZkClient(setting.get, 30000, 30000, ZKStringSerializer)
       ZkUtils.getAllTopics(zkClient)
@@ -122,11 +122,11 @@ trait MessageConsumerComponent {
     }
 
     class TopicMessages {
-      val messages: Seq[String] = Seq()
+      var messages: Seq[String] = Seq()
       val errors: Seq[String] = Seq()
     }
 
-    def get(topic: String, partition: Int) : TopicMessages = {
+    def get(topic: String, partition: Int): TopicMessages = {
       val result = new TopicMessages
 
       val brokers: util.List[String] = Play.configuration.getStringList("metadata.broker.list").get
@@ -162,7 +162,7 @@ trait MessageConsumerComponent {
         if (fetchResponse.hasError) {
           numErrors += 1
           val code = fetchResponse.errorCode(topic, partition)
-//          result.errors :+ ("Error fetching data from the Broker:" + leadBroker + " Reason: " + code)
+          //          result.errors :+ ("Error fetching data from the Broker:" + leadBroker + " Reason: " + code)
           if (numErrors > 5) //break
             if (code == ErrorMapping.OffsetOutOfRangeCode) {
               readOffset = getLastOffset(consumer, topic, partition, kafka.api.OffsetRequest.LatestTime, clientName)
@@ -179,14 +179,14 @@ trait MessageConsumerComponent {
         for (messageAndOffset <- fetchResponse.messageSet(topic, partition)) {
           val currentOffset = messageAndOffset.offset
           if (currentOffset < readOffset) {
-//            println("Found an old offset: " + currentOffset + " Expecting: " + readOffset)
+            //            println("Found an old offset: " + currentOffset + " Expecting: " + readOffset)
             //continue
           }
           readOffset = messageAndOffset.nextOffset
           val payload = messageAndOffset.message.payload
           val bytes = Array.ofDim[Byte](payload.limit())
           payload.get(bytes)
-          result.messages :+ (String.valueOf(messageAndOffset.offset) + ": " + new String(bytes, "UTF-8"))
+          result.messages = result.messages :+ new String(bytes, "UTF-8")
           numRead += 1
           maxReads -= 1
         }
@@ -209,12 +209,13 @@ trait MessageConsumerComponent {
       props.put("serializer.class", "kafka.serializer.StringEncoder")
       props.put("request.required.acks", "1")
 
-      val producer: Producer[String,String] = new Producer[String, String](new ProducerConfig(props))
-      val data: KeyedMessage[String, String] = new KeyedMessage[String, String](topic, partition.toString, message)
+      val producer = new Producer[String, String](new ProducerConfig(props))
+      val data = new KeyedMessage[String, String](topic, partition.toString, message)
 
       producer.send(data)
       producer.close()
     }
 
   }
+
 }
